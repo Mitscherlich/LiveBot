@@ -11,6 +11,15 @@ router = APIRouter()
 # 连接池
 _connections: set[WebSocket] = set()
 
+# 情感标签 → Live2D expression name 映射（需与模型 .exp3.json 的 Name 字段一致）
+_EMOTION_EXPRESSION_MAP: dict[str, str] = {
+    "开心": "happy",
+    "悲伤": "sad",
+    "愤怒": "angry",
+    "平静": "neutral",
+    "惊讶": "surprised",
+}
+
 
 async def broadcast(message: dict):
     """向所有已连接的前端广播消息。"""
@@ -55,9 +64,50 @@ async def _on_lip_sync(data: dict):
 
 @bus.on(Event.TTS_SUBTITLE)
 async def _on_subtitle(data: dict):
-    await broadcast({"type": "subtitle", **data})
+    emotion = data.get("emotion")
+    expression = _EMOTION_EXPRESSION_MAP.get(emotion) if emotion else None
+    await broadcast({"type": "subtitle", **data, "expression": expression})
+
+
+@bus.on(Event.LLM_TEXT_CHUNK)
+async def _on_llm_text_chunk(data: dict):
+    await broadcast({"type": "llm_chunk", **data})
+
+
+@bus.on(Event.LLM_SENTENCE)
+async def _on_llm_sentence(data: dict):
+    await broadcast({"type": "llm_sentence", **data})
+
+
+@bus.on(Event.LLM_DONE)
+async def _on_llm_done(_=None):
+    await broadcast({"type": "llm_done"})
 
 
 @bus.on(Event.PLAYBACK_DONE)
 async def _on_playback_done(_=None):
     await broadcast({"type": "playback_done"})
+
+
+def _derive_module(name: str) -> str:
+    """将 loguru record 的 name 字段映射到模块标识。"""
+    n = name.lower()
+    if "asr" in n:
+        return "ASR"
+    if "llm" in n:
+        return "LLM"
+    if "tts" in n:
+        return "TTS"
+    return "SYSTEM"
+
+
+async def log_sink(message):
+    """loguru sink：将 INFO+ 日志通过 WebSocket 广播到前端。"""
+    record = message.record
+    await broadcast({
+        "type": "log_entry",
+        "level": record["level"].name,
+        "module": _derive_module(record["name"]),
+        "message": record["message"],
+        "time": record["time"].strftime("%H:%M:%S"),
+    })

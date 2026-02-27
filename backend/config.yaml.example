@@ -1,0 +1,30 @@
+asr:
+  device: auto
+  microphone_device_index: null
+  min_speech_duration_ms: 200
+  model_size: small
+  silence_duration_ms: 800
+  vad_pre_roll_frames: 3
+  vad_rms_threshold: 2200.0
+  vad_sensitivity: 3
+character:
+  injected_history: []
+  live2d_model: hiyori_free_zh
+  name: Amber
+  persona: '你是一个活泼开朗的虚拟主播。你的话不要太长，控制在50字左右。'
+openclaw:
+  url: http://localhost:18789
+  token: your-openclaw-token-here
+  session_key: main
+  timeout_ms: 120000
+server:
+  bind_address: 127.0.0.1
+  port: 8000
+tts:
+  app_id: 0
+  codec: pcm
+  enabled: false
+  sample_rate: 16000
+  secret_id: your-tencent-secret-id
+  secret_key: your-tencent-secret-key
+  voice_type: 601012

@@ -13,6 +13,7 @@ import { CubismModelSettingJson } from '@framework/cubismmodelsettingjson'
 import { BreathParameterData, CubismBreath } from '@framework/effect/cubismbreath'
 import { CubismEyeBlink } from '@framework/effect/cubismeyeblink'
 import { CubismMotion } from '@framework/motion/cubismmotion'
+import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion'
 import { csmVector } from '@framework/type/csmvector'
 
 const Priority = { None: 0, Idle: 1, Normal: 2, Force: 3 } as const
@@ -33,7 +34,9 @@ function ensureFramework() {
 class VTuberModel extends CubismUserModel {
   private _setting: CubismModelSettingJson | null = null
   private _preloadedMotions = new Map<string, CubismMotion>()
+  private _expressionMap = new Map<string, CubismExpressionMotion>()
   private _projMatrix = new CubismMatrix44()
+  private _mouthOpenValue: number = 0
 
   async initialize(
     gl: WebGLRenderingContext,
@@ -118,8 +121,22 @@ class VTuberModel extends CubismUserModel {
       }
     }
 
-    // ⑨ 待機モーションを再生
-    this._startRandomMotion('idle', Priority.Idle)
+    // ⑨ expression をプリロード（存在しない場合は静默スキップ）
+    const exprCount = this._setting.getExpressionCount()
+    if (exprCount === 0) {
+      console.warn('[Live2D] No expressions found in model3.json')
+    }
+    for (let ei = 0; ei < exprCount; ei++) {
+      const name = this._setting.getExpressionName(ei)
+      const file = this._setting.getExpressionFileName(ei)
+      if (!name || !file) continue
+      const buf = await fetchBuffer(`${modelDir}${file}`)
+      const expr = this.loadExpression(buf, buf.byteLength, name) as CubismExpressionMotion
+      this._expressionMap.set(name, expr)
+    }
+
+    // ⑩ 待機モーションを再生
+    this._startRandomMotion('Idle', Priority.Idle)
   }
 
   /** グループ名でランダムにモーションを再生 */
@@ -139,10 +156,19 @@ class VTuberModel extends CubismUserModel {
     this._startRandomMotion(group, Priority.Normal)
   }
 
+  /** 表情を切り替える（CubismExpressionMotionManager 経由、fade-in/out 付き） */
+  playExpression(name: string): void {
+    const expr = this._expressionMap.get(name)
+    if (!expr) {
+      console.warn(`[Live2D] Expression "${name}" not found`)
+      return
+    }
+    this._expressionManager.startMotion(expr, false)
+  }
+
   /** 口型パラメータを直接設定（0.0〜1.0） */
   setMouthOpen(value: number): void {
-    const id = CubismFramework.getIdManager().getId('ParamMouthOpenY')
-    this._model.setParameterValueById(id, value)
+    this._mouthOpenValue = value
   }
 
   /** 毎フレーム更新（deltaSeconds: 秒単位） */
@@ -151,7 +177,9 @@ class VTuberModel extends CubismUserModel {
     const model = this._model
 
     model.loadParameters()
-    if (!this._motionManager.isFinished()) {
+    if (this._motionManager.isFinished()) {
+      this._startRandomMotion('Idle', Priority.Idle)
+    } else {
       this._motionManager.updateMotion(model, deltaSeconds)
     }
     model.saveParameters()
@@ -161,6 +189,10 @@ class VTuberModel extends CubismUserModel {
     this._physics?.evaluate(model, deltaSeconds)
     this._breath?.updateParameters(model, deltaSeconds)
     this._pose?.updateParameters(model, deltaSeconds)
+
+    // 在 model.update() 之前写入口型值，确保不被 Motion 的 saveParameters() 覆盖
+    const mouthId = CubismFramework.getIdManager().getId('ParamMouthOpenY')
+    this._model.setParameterValueById(mouthId, this._mouthOpenValue)
 
     model.update()
   }
@@ -271,6 +303,10 @@ export class CubismRenderer {
 
   triggerMotion(group: string): void {
     this.model?.playMotionGroup(group)
+  }
+
+  setExpression(name: string): void {
+    this.model?.playExpression(name)
   }
 
   setScale(scale: number): void {

@@ -4,6 +4,16 @@
  * 断线自动重连（指数退避，最多 5 次）
  */
 
+export type WsMessage =
+  | { type: "subtitle"; text: string; emotion: string }
+  | { type: "lip_sync"; timeline: { char: string; beginTime: number; endTime: number }[]; t0: number; audioDelay?: number }
+  | { type: "playback_done" }
+  | { type: "asr_result"; text: string; emotion: string }
+  | { type: "llm_chunk"; text: string }
+  | { type: "llm_sentence"; text: string; emotion: string }
+  | { type: "llm_done" }
+  | { type: "log_entry"; level: string; module: string; message: string; time: string }
+
 type MessageHandler = (msg: WsMessage) => void
 
 const WS_URL = `ws://${window.location.host}/ws/live2d`

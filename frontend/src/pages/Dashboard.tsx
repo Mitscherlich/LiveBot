@@ -15,9 +15,11 @@ interface LogEntry {
   time: string
   type: string
   message: string
+  level: string
+  module: string
 }
 
-const MAX_LOGS = 50
+const MAX_LOGS = 200
 
 export default function Dashboard() {
   const [systemStatus, setSystemStatus] = useState<'online' | 'offline' | 'loading'>('loading')
@@ -25,6 +27,7 @@ export default function Dashboard() {
   const [micRunning, setMicRunning] = useState(false)
   const [micLoading, setMicLoading] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([])
+  const [filterModule, setFilterModule] = useState('ALL')
 
   // 轮询后端状态 + 麦克风状态
   useEffect(() => {
@@ -74,11 +77,19 @@ export default function Dashboard() {
       let logEntry: LogEntry | null = null
 
       if (msg.type === 'subtitle') {
-        logEntry = { time: now, type: 'LLM→TTS', message: `${msg.emotion} | ${msg.text}` }
+        logEntry = { time: now, type: 'LLM→TTS', message: `${msg.emotion} | ${msg.text}`, level: 'INFO', module: 'LLM' }
       } else if (msg.type === 'lip_sync') {
-        logEntry = { time: now, type: 'TTS', message: `口型时间线推送 (${msg.timeline.length} 字)` }
+        logEntry = { time: now, type: 'TTS', message: `口型时间线推送 (${msg.timeline.length} 字)`, level: 'INFO', module: 'TTS' }
       } else if (msg.type === 'playback_done') {
-        logEntry = { time: now, type: 'TTS', message: '播放完成' }
+        logEntry = { time: now, type: 'TTS', message: '播放完成', level: 'INFO', module: 'TTS' }
+      } else if (msg.type === 'asr_result') {
+        logEntry = { time: now, type: 'ASR', message: `${msg.emotion} | ${msg.text}`, level: 'INFO', module: 'ASR' }
+      } else if (msg.type === 'llm_sentence') {
+        logEntry = { time: now, type: 'LLM', message: `${msg.emotion} | ${msg.text}`, level: 'INFO', module: 'LLM' }
+      } else if (msg.type === 'llm_done') {
+        logEntry = { time: now, type: 'LLM', message: '生成完成', level: 'INFO', module: 'LLM' }
+      } else if (msg.type === 'log_entry') {
+        logEntry = { time: msg.time, type: msg.module, message: msg.message, level: msg.level, module: msg.module }
       }
 
       if (logEntry) {
@@ -91,6 +102,8 @@ export default function Dashboard() {
       unsub()
     }
   }, [])
+
+  const filteredLogs = filterModule === 'ALL' ? logs : logs.filter(log => log.module === filterModule)
 
   return (
     <div className="p-6 space-y-6">
@@ -144,7 +157,7 @@ export default function Dashboard() {
 
       {/* 实时日志 */}
       <div className="card">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-gray-400 flex items-center gap-2">
             <RefreshCw size={16} /> 实时事件日志
           </h2>
@@ -155,18 +168,30 @@ export default function Dashboard() {
             清空
           </button>
         </div>
+        {/* 模块过滤按钮组 */}
+        <div className="flex gap-1.5 mb-3 flex-wrap">
+          {['ALL', 'ASR', 'LLM', 'TTS', 'SYSTEM'].map(mod => (
+            <button
+              key={mod}
+              onClick={() => setFilterModule(mod)}
+              className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
+                filterModule === mod
+                  ? 'bg-gray-600 text-gray-100'
+                  : 'bg-gray-800 text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              {mod}
+            </button>
+          ))}
+        </div>
         <div className="space-y-1.5 max-h-80 overflow-y-auto font-mono text-xs">
-          {logs.length === 0 ? (
+          {filteredLogs.length === 0 ? (
             <p className="text-gray-600 text-center py-8">等待事件...</p>
           ) : (
-            logs.map((log, i) => (
+            filteredLogs.map((log, i) => (
               <div key={i} className="flex gap-3 text-gray-400">
                 <span className="text-gray-600 flex-none">{log.time}</span>
-                <span className={`flex-none font-medium ${
-                  log.type === 'LLM→TTS' ? 'text-purple-400'
-                  : log.type === 'TTS' ? 'text-blue-400'
-                  : 'text-green-400'
-                }`}>[{log.type}]</span>
+                <span className={`flex-none font-medium ${logTypeColor(log)}`}>[{log.type}]</span>
                 <span className="text-gray-300 break-all">{log.message}</span>
               </div>
             ))
@@ -175,6 +200,16 @@ export default function Dashboard() {
       </div>
     </div>
   )
+}
+
+function logTypeColor(log: LogEntry): string {
+  if (log.level === 'ERROR') return 'text-red-400'
+  if (log.level === 'WARNING') return 'text-yellow-400'
+  if (log.type === 'ASR') return 'text-green-400'
+  if (log.type === 'LLM' || log.type === 'LLM→TTS') return 'text-purple-400'
+  if (log.type === 'TTS') return 'text-blue-400'
+  if (log.type === 'SYSTEM') return 'text-gray-400'
+  return 'text-green-400'
 }
 
 function ModuleCard({

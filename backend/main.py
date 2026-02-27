@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,13 +11,16 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from core.bot import VTuberBot
+from config import get_config
 
 bot = VTuberBot()
+
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await bot.start()
+    logger.add(log_sink, level="INFO", format="{message}")
     yield
     await bot.stop()
 
@@ -24,13 +28,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AI VTuber Bot", lifespan=lifespan)
 
 # 路由注册
-from api.ws_live2d import router as ws_router
+from api.ws_live2d import router as ws_router, log_sink
 from api.config_api import router as config_router
 from api.models_api import router as models_router
+from api.chat_api import router as chat_router
 
 app.include_router(ws_router)
 app.include_router(config_router)
 app.include_router(models_router)
+app.include_router(chat_router)
 
 # Live2D 模型静态文件
 models_dir = Path(__file__).parent.parent / "models"
@@ -48,6 +54,23 @@ if static_dir.exists():
         return FileResponse(static_dir / "index.html")
 
 
+def validate_bind_address(address: str) -> str:
+    """验证绑定地址是否为有效 IP，无效则返回 127.0.0.1"""
+    try:
+        ipaddress.ip_address(address)
+        return address
+    except ValueError:
+        logger.warning(f"Invalid bind address '{address}', falling back to 127.0.0.1")
+        return "127.0.0.1"
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    
+    config = get_config()
+    bind_address = validate_bind_address(config.server.bind_address)
+    port = config.server.port
+    
+    logger.info(f"Starting server on {bind_address}:{port}")
+
+    uvicorn.run("main:app", host=bind_address, port=port, reload=False)

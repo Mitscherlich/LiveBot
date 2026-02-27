@@ -14,13 +14,12 @@ class CharacterConfig(BaseModel):
     live2d_model: str = ""
 
 
-class LLMConfig(BaseModel):
-    provider: str = "deepseek"
-    api_key: str = ""
-    base_url: str = "https://api.deepseek.com"
-    model: str = "deepseek-chat"
-    temperature: float = 0.8
-    max_tokens: int = 512
+class OpenClawConfig(BaseModel):
+    url: str = "http://localhost:18789"
+    token: str = ""
+    session_key: str = "main"
+    agent_id: str = ""
+    timeout_ms: int = 120000
 
 
 class ASRConfig(BaseModel):
@@ -30,11 +29,12 @@ class ASRConfig(BaseModel):
     silence_duration_ms: int = 800
     min_speech_duration_ms: int = 300
     microphone_device_index: Optional[int] = None
-    vad_rms_threshold: float = 2200.0   # RMS能量预过滤阈值
-    vad_pre_roll_frames: int = 3        # Pre-roll帧数（默认90ms）
+    vad_rms_threshold: float = 2200.0  # RMS能量预过滤阈值
+    vad_pre_roll_frames: int = 3  # Pre-roll帧数（默认90ms）
 
 
 class TTSConfig(BaseModel):
+    enabled: bool = True
     app_id: int = 0
     secret_id: str = ""
     secret_key: str = ""
@@ -43,29 +43,17 @@ class TTSConfig(BaseModel):
     sample_rate: int = 16000
 
 
-class MemoryScoringConfig(BaseModel):
-    """记忆重要性打分专用 LLM 配置（独立于对话 LLM，可使用更便宜的小模型）。"""
-    provider: str = "deepseek"
-    api_key: str = ""
-    base_url: str = "https://api.deepseek.com"
-    model: str = "deepseek-chat"
-
-
-class MemoryConfig(BaseModel):
-    short_term_window: int = 10
-    short_term_max: int = 50
-    long_term_score_threshold: int = 7
-    chroma_db_path: str = "./data/chroma"
-    sqlite_path: str = "./data/conversations.db"
-    scoring: MemoryScoringConfig = MemoryScoringConfig()
+class ServerConfig(BaseModel):
+    bind_address: str = "127.0.0.1"  # 默认仅监听本地
+    port: int = 8000
 
 
 class AppConfig(BaseModel):
     character: CharacterConfig = CharacterConfig()
-    llm: LLMConfig = LLMConfig()
+    openclaw: OpenClawConfig = OpenClawConfig()
     asr: ASRConfig = ASRConfig()
     tts: TTSConfig = TTSConfig()
-    memory: MemoryConfig = MemoryConfig()
+    server: ServerConfig = ServerConfig()
 
 
 def load_config(path: Path = CONFIG_PATH) -> AppConfig:

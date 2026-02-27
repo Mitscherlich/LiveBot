@@ -15,3 +15,6 @@ models/
 backend/data/
 **/*.db
 **/*.sqlite3
+
+# Config（含 API Key，不入库）
+backend/config.yaml

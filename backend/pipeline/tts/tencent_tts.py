@@ -5,7 +5,9 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import queue
+import struct
 import time
 import threading
 import uuid
@@ -24,6 +26,43 @@ EMOTION_MAP = {
     "平静": {"EmotionCategory": "neutral", "EmotionIntensity": 100, "Speed": 0,  "Volume": 0},
     "惊讶": {"EmotionCategory": "fear",    "EmotionIntensity": 130, "Speed": 1,  "Volume": 2},
 }
+
+
+def _pcm_to_amplitude_timeline(pcm: bytes, sample_rate: int, chunk_ms: int = 30) -> list[dict]:
+    """将 PCM 16-bit 单声道数据转换为幅度时间线，用于口型驱动。
+
+    每 chunk_ms 毫秒计算一次 RMS，仅保留幅度高于静音阈值的窗口，
+    相邻窗口合并为一个 timeline 条目，格式与 TTS API 字幕格式兼容。
+    """
+    bytes_per_sample = 2  # 16-bit
+    samples_per_chunk = int(sample_rate * chunk_ms / 1000)
+    bytes_per_chunk = samples_per_chunk * bytes_per_sample
+    SILENCE_THRESHOLD = 0.02  # RMS 低于此值视为静音
+
+    timeline: list[dict] = []
+    n_chunks = len(pcm) // bytes_per_chunk
+
+    for i in range(n_chunks):
+        chunk = pcm[i * bytes_per_chunk: (i + 1) * bytes_per_chunk]
+        n = len(chunk) // bytes_per_sample
+        if n == 0:
+            continue
+        samples = struct.unpack(f"<{n}h", chunk[:n * bytes_per_sample])
+        rms = math.sqrt(sum(s * s for s in samples) / n) / 32768.0
+
+        if rms < SILENCE_THRESHOLD:
+            continue
+
+        begin_ms = i * chunk_ms
+        end_ms = begin_ms + chunk_ms
+
+        # 与上一条目相邻则合并（避免碎片化）
+        if timeline and timeline[-1]["endTime"] >= begin_ms - chunk_ms:
+            timeline[-1]["endTime"] = end_ms
+        else:
+            timeline.append({"char": ".", "beginTime": begin_ms, "endTime": end_ms})
+
+    return timeline
 
 
 def _sign_request(secret_id: str, secret_key: str, params: dict) -> str:
@@ -89,6 +128,7 @@ class TencentTTSPipeline:
             "Volume": emotion_params["Volume"],
             "EmotionCategory": emotion_params["EmotionCategory"],
             "EmotionIntensity": emotion_params["EmotionIntensity"],
+            "SubtitleType": 1,
         }
 
         url = _sign_request(self.config.secret_id, self.config.secret_key, params)
@@ -131,17 +171,18 @@ class TencentTTSPipeline:
                             pcm_frames.append(msg)
                         else:
                             resp = json.loads(msg)
+                            subs_raw = (resp.get("result") or {}).get("subtitles")
                             if resp.get("code", 0) != 0:
                                 logger.error(f"TTS 错误: {resp}")
                                 break
-                            if resp.get("final") == 1:
-                                break
-                            for sub in (resp.get("result") or {}).get("subtitles") or []:
+                            for sub in subs_raw or []:
                                 timeline.append({
                                     "char": sub.get("Text", ""),
                                     "beginTime": sub.get("BeginTime", 0),
                                     "endTime": sub.get("EndTime", 0),
                                 })
+                            if resp.get("final") == 1:
+                                break
                 except websockets.exceptions.ConnectionClosedError:
                     # 腾讯云服务端发完数据后直接关闭 TCP，无 close frame，属正常结束
                     pass
@@ -164,9 +205,15 @@ class TencentTTSPipeline:
         t0 = time.time() + 0.05  # 预留 50ms 缓冲
         self._audio_queue.put(pcm)
 
+        # 若 API 未返回字幕时间线，从 PCM 幅度生成备用口型时间线
+        if not timeline:
+            timeline = _pcm_to_amplitude_timeline(pcm, self.config.sample_rate)
+
         # 推送口型时间线
         if timeline:
-            bus.emit(Event.TTS_LIP_SYNC, {"timeline": timeline, "t0": t0 * 1000})
+            lip_sync_data = {"timeline": timeline, "t0": t0 * 1000, "audioDelay": 50}
+            logger.debug(f"TTS_LIP_SYNC: chars={len(timeline)}, first={timeline[0]}")
+            bus.emit(Event.TTS_LIP_SYNC, lip_sync_data)
 
     def _player_loop(self):
         """后台线程：从队列取 PCM，用 pygame 播放。"""

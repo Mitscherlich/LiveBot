@@ -13,8 +13,10 @@ import { AlertTriangle, Loader2 } from 'lucide-react'
 export interface Live2DCanvasHandle {
   /** 设置口型张开程度（0.0 ~ 1.0），用于口型同步 */
   setMouthOpen(value: number): void
-  /** 根据情感 key 触发对应动作（"开心" | "悲伤" | "愤怒" | "平静" | "惊讶"） */
+  /** 根据情感 key 触发对应 expression + motion（"开心" | "悲伤" | "愤怒" | "平静" | "惊讶"） */
   triggerEmotion(emotion: string): void
+  /** 直接切换 expression（.exp3.json 中的 Name 字段），模型未加载时静默忽略 */
+  setExpression(name: string): void
 }
 
 interface Props {
@@ -25,13 +27,15 @@ interface Props {
   className?: string
 }
 
-// 情感 → Motion Group 映射
-const EMOTION_MOTION_MAP: Record<string, string> = {
-  开心: 'happy',
-  悲伤: 'sad',
-  愤怒: 'angry',
-  平静: 'idle',
-  惊讶: 'surprised',
+// 情感 → { expression name, motion group } 双映射
+// expression: 对应模型 .exp3.json 中的 Name（模型无 expression 时静默降级）
+// motionGroup: 对应 model3.json MotionGroups 中的 Name（大小写需与模型一致）
+const EMOTION_MAP: Record<string, { expression: string; motionGroup: string }> = {
+  开心: { expression: 'happy',     motionGroup: 'Flick'     },
+  悲伤: { expression: 'sad',       motionGroup: 'FlickDown' },
+  愤怒: { expression: 'angry',     motionGroup: 'Flick'     },
+  平静: { expression: 'neutral',   motionGroup: 'Idle'      },
+  惊讶: { expression: 'surprised', motionGroup: 'FlickUp'   },
 }
 
 
@@ -136,9 +140,18 @@ const Live2DCanvas = forwardRef<Live2DCanvasHandle, Props>(({ modelName, scale =
     setMouthOpen(value: number) {
       mouthOpenRef.current = Math.max(0, Math.min(1, value))
     },
+    setExpression(name: string) {
+      rendererRef.current?.setExpression(name)
+    },
     triggerEmotion(emotion: string) {
-      const motionGroup = EMOTION_MOTION_MAP[emotion] ?? 'idle'
-      rendererRef.current?.triggerMotion(motionGroup)
+      const mapping = EMOTION_MAP[emotion]
+      if (!mapping) {
+        console.warn(`[Live2D] Unknown emotion "${emotion}", falling back to Idle`)
+        rendererRef.current?.triggerMotion('Idle')
+        return
+      }
+      rendererRef.current?.setExpression(mapping.expression)
+      rendererRef.current?.triggerMotion(mapping.motionGroup)
     },
   }), [])
 
